@@ -1,0 +1,14 @@
+[package]
+name = "sprocket"
+version = "0.1.0"
+authors = ["Asher Baker <asherkin@limetech.io>"]
+edition = "2018"
+description = "Modern sockets for SourceMod"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+sm-ext = "0.3"
+futures = "0.3"
+async-std = "1.4"
