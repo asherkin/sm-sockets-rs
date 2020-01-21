@@ -8,19 +8,31 @@ use sm_ext::{
 };
 use std::cell::RefCell;
 use std::error::Error;
+use std::ffi::CString;
 
 /*
 typedef UdpSocketBoundCallback = function void(UdpSocket socket, any data);
 typedef UdpSocketConnectedCallback = function void(UdpSocket socket, any data);
+typedef UdpSocketReceiveCallback = function void(UdpSocket socket, const char[] buffer, int length, any data);
 
 methodmap UdpSocket < Handle {
     public static native void Bind(UdpSocketBoundCallback callback, const char[] ip = "0.0.0.0", int port = 0, any data = 0);
     public native void Connect(UdpSocketConnectedCallback callback, const char[] host, int port, any data = 0);
     public native void Send(const char[] data, int length = 0);
+    public native void Receive(UdpSocketReceiveCallback callback, int length = 4096, any data = 0);
+}
+
+public void OnSocketReceive(UdpSocket socket, const char[] buffer, int length, any data)
+{
+    PrintToServer(">>> \"%s\"", buffer);
+
+    socket.Receive(OnSocketReceive, _, data);
 }
 
 public void OnSocketConnected(UdpSocket socket, any data)
 {
+    socket.Receive(OnSocketReceive);
+
     socket.Send("Hello, World!");
 }
 
@@ -211,6 +223,65 @@ fn native_udpsocket_send(
     Ok(())
 }
 
+#[native]
+fn native_udpsocket_receive(
+    ctx: &IPluginContext,
+    handle: HandleId,
+    mut callback: IPluginFunction,
+    length: i32,
+    data: cell_t,
+) -> Result<(), Box<dyn Error>> {
+    let context = HandleRef::new(MyExtension::udp_handle_type(), handle, ctx.get_identity())?;
+
+    let mut forward = MyExtension::forwardsys().create_private_forward(
+        None,
+        ExecType::Single,
+        &[
+            ParamType::Cell,
+            ParamType::String,
+            ParamType::Cell,
+            ParamType::Cell,
+        ],
+    )?;
+
+    forward.add_function(&mut callback);
+
+    // TODO: This is a super worse version of the case in native_udpsocket_connect, as we could
+    // be waiting a very long time for the next data to arrive, so we need to somehow cancel this
+    // when the plugin is done with the socket (or gets unloaded!)
+    MyExtension::spawner().spawn_local(async move {
+        let future = async {
+            let mut buffer = vec![0; length as usize];
+
+            let length = context
+                .socket
+                .as_ref()
+                .unwrap()
+                .recv(buffer.as_mut_slice())
+                .await?;
+
+            // TODO: This is all hackery.
+            // let buffer = CString::new(buffer)?;
+            let buffer = unsafe { CString::from_vec_unchecked(buffer) };
+
+            forward.push(handle)?;
+            forward.push(buffer.as_c_str())?;
+            forward.push(length as i32)?;
+            forward.push(data)?;
+            forward.execute()?;
+
+            Ok(())
+        };
+
+        // TODO: Error callback.
+        if let Result::<(), Box<dyn Error>>::Err(err) = future.await {
+            MyExtension::log_error(format!("error occurred when receiving data: {}", err));
+        }
+    })?;
+
+    Ok(())
+}
+
 extern "C" fn on_game_frame(_: bool) {
     let _ = std::panic::catch_unwind(|| {
         let mut pool = MyExtension::get().pool.borrow_mut();
@@ -285,6 +356,7 @@ impl IExtensionInterface for MyExtension {
                 ("UdpSocket.Bind", native_udpsocket_bind),       //
                 ("UdpSocket.Connect", native_udpsocket_connect), //
                 ("UdpSocket.Send", native_udpsocket_send),       //
+                ("UdpSocket.Receive", native_udpsocket_receive), //
             ]
         );
 
