@@ -9,6 +9,6 @@ description = "Modern sockets for SourceMod"
 crate-type = ["cdylib"]
 
 [dependencies]
-sm-ext = "0.3"
+sm-ext = { version = "*", path = "../sm-ext-rs" }
 futures = "0.3"
 async-std = "1.4"
