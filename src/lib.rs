@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::error::Error;
 use std::ffi::CString;
 use std::rc::Rc;
+use std::time::Duration;
 
 /*
 typedef UdpSocketBoundCallback = function void(UdpSocket socket, any data);
@@ -48,6 +49,8 @@ public void OnPluginStart()
     UdpSocket.Bind(OnSocketBound);
 }
 */
+
+const HANDLE_LIVENESS_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 struct UdpSocketContext {
@@ -94,7 +97,7 @@ fn native_udpsocket_bind(
 
         if let Result::<(), Box<dyn Error>>::Err(_) = future.await {
             let future = async {
-                // We have to manually release the handle we cloned for the plugin.
+                // We have to manually release the handle we created for the plugin.
                 MyExtension::udp_handle_type()
                     .free_handle(handle, MyExtension::myself().get_identity())?;
 
@@ -141,24 +144,35 @@ fn native_udpsocket_connect(
 
     MyExtension::spawner().spawn_local(async move {
         let future = async {
-            context
-                .try_borrow()?
-                .socket
-                .as_ref()
-                .unwrap()
-                .connect((host.as_str(), port as u16))
-                .await?;
+            loop {
+                let result = async_std::future::timeout(
+                    HANDLE_LIVENESS_INTERVAL,
+                    context
+                        .try_borrow()?
+                        .socket
+                        .as_ref()
+                        .unwrap()
+                        .connect((host.as_str(), port as u16)),
+                )
+                .await;
 
-            if Rc::strong_count(&context) == 1 {
-                // We're the only ref, so the plugin's already closed the handle and doesn't care.
-                return Ok(());
+                // If we're the only reference left, the plugin's handle is gone
+                // and no one cares we're connected.
+                if Rc::strong_count(&context) == 1 {
+                    break Ok(());
+                }
+
+                match result {
+                    Ok(result) => result,
+                    Err(_) => continue,
+                }?;
+
+                forward.push(handle)?;
+                forward.push(data)?;
+                forward.execute()?;
+
+                break Ok(());
             }
-
-            forward.push(handle)?;
-            forward.push(data)?;
-            forward.execute()?;
-
-            Ok(())
         };
 
         if let Result::<(), Box<dyn Error>>::Err(_) = future.await {
@@ -240,32 +254,45 @@ fn native_udpsocket_receive(
 
     forward.add_function(&mut callback);
 
-    // TODO: This is a super worse version of the case in native_udpsocket_connect, as we could
-    // be waiting a very long time for the next data to arrive, so we need to somehow cancel this
-    // when the plugin is done with the socket (or gets unloaded!)
     MyExtension::spawner().spawn_local(async move {
         let future = async {
             let mut buffer = vec![0; length as usize];
 
-            let length = context
-                .try_borrow()?
-                .socket
-                .as_ref()
-                .unwrap()
-                .recv(buffer.as_mut_slice())
-                .await?;
+            loop {
+                let result = async_std::future::timeout(
+                    HANDLE_LIVENESS_INTERVAL,
+                    context
+                        .try_borrow()?
+                        .socket
+                        .as_ref()
+                        .unwrap()
+                        .recv(buffer.as_mut_slice()),
+                )
+                .await;
 
-            // TODO: This is all hackery.
-            // let buffer = CString::new(buffer)?;
-            let buffer = unsafe { CString::from_vec_unchecked(buffer) };
+                // If we're the only reference left, the plugin's handle is gone
+                // and no one cares about the data we've received.
+                if Rc::strong_count(&context) == 1 {
+                    break Ok(());
+                }
 
-            forward.push(handle)?;
-            forward.push(buffer.as_c_str())?;
-            forward.push(length as i32)?;
-            forward.push(data)?;
-            forward.execute()?;
+                let length = match result {
+                    Ok(result) => result,
+                    Err(_) => continue,
+                }?;
 
-            Ok(())
+                // TODO: This is all hackery.
+                // let buffer = CString::new(buffer)?;
+                let buffer = unsafe { CString::from_vec_unchecked(buffer) };
+
+                forward.push(handle)?;
+                forward.push(buffer.as_c_str())?;
+                forward.push(length as i32)?;
+                forward.push(data)?;
+                forward.execute()?;
+
+                break Ok(());
+            }
         };
 
         // TODO: Error callback.
