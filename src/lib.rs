@@ -1,54 +1,19 @@
-use async_std::net::UdpSocket;
-use futures::executor::{LocalPool, LocalSpawner};
-use futures::task::LocalSpawnExt;
-use sm_ext::{
-    cell_t, native, register_natives, ExecType, Executable, GameFrameHookId, HandleAccess,
-    HandleAccessRestriction, HandleId, HandleType, IExtension, IExtensionInterface,
-    IForwardManager, IHandleSys, IPluginContext, IPluginFunction, IShareSys, ISourceMod, ParamType,
-    SMExtension,
-};
 use std::cell::RefCell;
 use std::error::Error;
 use std::ffi::CString;
 use std::rc::Rc;
 use std::time::Duration;
 
-/*
-typedef UdpSocketBoundCallback = function void(UdpSocket socket, any data);
-typedef UdpSocketConnectedCallback = function void(UdpSocket socket, any data);
-typedef UdpSocketReceiveCallback = function void(UdpSocket socket, const char[] buffer, int length, any data);
+use async_std::net::UdpSocket;
+use futures::executor::{LocalPool, LocalSpawner};
+use futures::task::LocalSpawnExt;
 
-methodmap UdpSocket < Handle {
-    public static native void Bind(UdpSocketBoundCallback callback, const char[] ip = "0.0.0.0", int port = 0, any data = 0);
-    public native void Connect(UdpSocketConnectedCallback callback, const char[] host, int port, any data = 0);
-    public native void Send(const char[] data, int length = 0);
-    public native void Receive(UdpSocketReceiveCallback callback, int length = 4096, any data = 0);
-}
-
-public void OnSocketReceive(UdpSocket socket, const char[] buffer, int length, any data)
-{
-    PrintToServer(">>> \"%s\"", buffer);
-
-    socket.Receive(OnSocketReceive, _, data);
-}
-
-public void OnSocketConnected(UdpSocket socket, any data)
-{
-    socket.Receive(OnSocketReceive);
-
-    socket.Send("Hello, World!");
-}
-
-public void OnSocketBound(UdpSocket socket, any data)
-{
-    socket.Connect(OnSocketConnected, "echo.u-blox.com", 7);
-}
-
-public void OnPluginStart()
-{
-    UdpSocket.Bind(OnSocketBound);
-}
-*/
+use sm_ext::{
+    cell_t, native, register_natives, ExecType, Executable, GameFrameHookId, HandleAccess,
+    HandleAccessRestriction, HandleId, HandleType, IExtension, IExtensionInterface,
+    IForwardManager, IHandleSys, IPluginContext, IPluginFunction, IShareSys, ISourceMod, ParamType,
+    SMExtension,
+};
 
 const HANDLE_LIVENESS_INTERVAL: Duration = Duration::from_millis(100);
 
