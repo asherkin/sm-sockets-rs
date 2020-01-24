@@ -23,6 +23,7 @@ struct UdpSocketContext {
 }
 
 #[native]
+#[allow(clippy::redundant_pattern_matching)]
 fn native_udpsocket_bind(
     ctx: &IPluginContext,
     mut callback: IPluginFunction,
@@ -87,6 +88,7 @@ fn native_udpsocket_bind(
 }
 
 #[native]
+#[allow(clippy::redundant_pattern_matching)]
 fn native_udpsocket_connect(
     ctx: &IPluginContext,
     handle: HandleId,

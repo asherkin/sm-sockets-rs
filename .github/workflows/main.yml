@@ -1,0 +1,125 @@
+name: Continuous Integration
+
+on: [push, pull_request]
+
+jobs:
+
+  rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name:
+          - ubuntu-latest-stable-debug
+          - ubuntu-latest-stable-release
+          - windows-latest-stable-debug
+          - windows-latest-stable-release
+        include:
+          - name: ubuntu-latest-stable-debug
+            os: ubuntu-latest
+            rust: stable
+            target: i686-unknown-linux-gnu
+            rustflags: -D warnings
+            profile: debug
+          - name: ubuntu-latest-stable-release
+            os: ubuntu-latest
+            rust: stable
+            target: i686-unknown-linux-gnu
+            rustflags: -D warnings
+            profile: release
+          - name: windows-latest-stable-debug
+            os: windows-latest
+            rust: stable
+            target: i686-pc-windows-msvc
+            rustflags: -D warnings -C target-feature=+crt-static
+            profile: debug
+          - name: windows-latest-stable-release
+            os: windows-latest
+            rust: stable
+            target: i686-pc-windows-msvc
+            rustflags: -D warnings -C target-feature=+crt-static
+            profile: release
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install 32-bit support
+        if: runner.os == 'Linux'
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update || true
+          sudo apt-get install -y g++-multilib
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.target }}
+          override: true
+          components: rustfmt, clippy
+
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --all --all-targets --target=${{ matrix.target }} ${{ ( matrix.profile == 'release' && '--release' ) || '' }}
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+
+      - name: Extract debug info
+        if: runner.os == 'Linux'
+        run: |
+          cd target/${{ matrix.target }}/${{ ( matrix.profile == 'release' && 'release' ) || 'debug' }}/deps/
+          objcopy --only-keep-debug libsprocket.so libsprocket.so.dbg
+          objcopy --strip-debug libsprocket.so
+          objcopy --add-gnu-debuglink=libsprocket.so.dbg libsprocket.so
+
+      - name: Prepare artifacts
+        run: |
+          cd target/${{ matrix.target }}/${{ ( matrix.profile == 'release' && 'release' ) || 'debug' }}/deps/
+          mkdir ${{ matrix.name }}
+          cp ${{ ( runner.os == 'Linux' && 'lib' ) || '' }}sprocket.${{ ( runner.os == 'Linux' && 'so' ) || 'dll' }} ${{ matrix.name }}/sprocket.ext.${{ ( runner.os == 'Linux' && 'so' ) || 'dll' }}
+          cp ${{ ( runner.os == 'Linux' && 'lib' ) || '' }}sprocket.${{ ( runner.os == 'Linux' && 'so.dbg' ) || 'pdb' }} ${{ matrix.name }}/${{ ( runner.os == 'Linux' && 'lib' ) || '' }}sprocket.${{ ( runner.os == 'Linux' && 'so.dbg' ) || 'pdb' }}
+
+      - uses: actions/upload-artifact@v1
+        with:
+          name: ${{ matrix.name }}
+          path: target/${{ matrix.target }}/${{ ( matrix.profile == 'release' && 'release' ) || 'debug' }}/deps/${{ matrix.name }}
+
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all --all-targets --target=${{ matrix.target }} ${{ ( matrix.profile == 'release' && '--release' ) || '' }}
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+
+  sourcepawn:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sm-version: [ '1.10', '1.11' ]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: rumblefrog/setup-sp@master
+        with:
+          version: ${{ matrix.sm-version }}
+
+      - name: Compile plugin
+        run: |
+          mkdir plugin-${{ matrix.sm-version }}
+          cd plugin-${{ matrix.sm-version }}
+          cp ../sprocket.sp ./
+          cp ../sprocket.inc ./
+          spcomp -i. sprocket.sp
+
+      - uses: actions/upload-artifact@v1
+        with:
+          name: plugin-${{ matrix.sm-version }}
+          path: plugin-${{ matrix.sm-version }}
